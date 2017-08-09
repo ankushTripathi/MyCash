@@ -1,5 +1,10 @@
 import hashlib
 import datetime as date
+from flask import Flask
+from flask import request
+import json
+
+node = Flask(__name__);
 
 class Block:
 
@@ -21,25 +26,106 @@ class Block:
 
 def genesis_block():
     ## create the first block 
-    return Block(0,date.datetime.now(),"there are 42,000,000 MyCash",hashlib.sha256("top secret").hexdigest())
+    return Block(0,date.datetime.now(),{"nounce" : 19,"total Mycash":42000 },hashlib.sha256("top secret").hexdigest())
 
-def next_block(prev_block):
+def next_block(prev_block,data):
     index = prev_block.index+1
     timestamp = date.datetime.now()
-    data = "A pays B 1MC"
     prev_hash = prev_block.prev_hash
     
     return Block(index,timestamp,data,prev_hash)
 
-## testing 
 
-BlockChain = [genesis_block()]
-prev_block = BlockChain[0]
+blockchain = []
+blockchain.append(genesis_block())
+node_txns = []
+peers = []
+miners = []
 
-for i in range(10):
-    block = next_block(prev_block)
-    BlockChain.append(block)
-    print "new block added :"
-    print block.hash
-    print block.index , block.data, block.timestamp
-    prev_block = block
+
+## keeping  a simple algo
+def proof_of_work(prev_proof):
+    i = prev_proof+1;
+    n = blockchain[0].data["nounce"];
+    while not i%n==0 and i%prev_proof==0 :
+        i+=1
+    
+    return i
+
+@node.route('/txn',methods = ['POST'])
+def transaction():
+    if request.method == 'POST':
+        txn = request.get_json()
+        print "New Transaction!"
+        print "FROM :",txn['from']
+        print "TO :",txn['to']
+        print "Amount :",txn['amount']
+        node_txns.append(txn)
+
+        return "transaction added!"
+
+
+@node.route('/mine',methods=['GET'])
+def mine():
+    last_block = blockchain[len(blockchain)-1]
+    prev_proof = last_block.data['nounce']
+    proof = proof_of_work(prev_proof)
+    node_txns.append({
+        "from" : "network",
+        "to": request.args.get('miner'),
+        "amount" : 10
+    })
+
+    data = {
+    "nounce": proof,
+    "transactions": list(node_txns)
+    }
+
+    block = next_block(last_block,data)
+    blockchain.append(block)
+    node_txns[:] = []
+
+    return json.dumps({
+    "index" : block.index,
+    "timestamp" : str(block.timestamp),
+    "data" : block.data,
+    "hash" : block.hash
+    })+"\n"
+
+@node.route('/blocks',methods=['GET'])
+def get_blocks():
+    chain_to_send = list(blockchain)
+    for i in range(len(chain_to_send)):
+        block = chain_to_send[i]
+        block_index = str(block.index)
+        block_timestamp = str(block.timestamp)
+        block_data = str(block.data)
+        block_hash = block.hash
+        chain_to_send[i] = {
+        "index": block_index,
+        "timestamp": block_timestamp,
+        "data": block_data,
+        "hash": block_hash
+        }
+    chain_to_send = json.dumps(chain_to_send)
+    return chain_to_send
+
+def find_chains():
+    other_chains = []
+    for node_url in peers:
+        block = requests.get(node_url + "/blocks").content
+        block = json.loads(block)
+        other_chains.append(block)
+    return other_chains
+
+def consensus():
+    other_chains = find_chains()
+    max_chain = blockchain
+
+    for chain in other_chains:
+        if len(chain) > len(max_chain):
+            max_chain = chain
+
+    blockchain = max_chain
+
+node.run()
